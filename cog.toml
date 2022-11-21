@@ -1,0 +1,22 @@
+pre_bump_hooks = [
+    "cargo check",
+]
+
+tag_prefix = "v"
+
+[commit_types]
+tests = { changelog_title = "Tests" }
+
+[changelog]
+path        = "CHANGELOG.md"
+template    = "remote"
+remote      = "github.com"
+owner       = "WalletConnect"
+repository  = "gorgon"
+
+authors = [
+    { signature = "Harry Bairstow", username = "HarryET" },
+    { signature = "Derek Rein", username = "arein" },
+    { signature = "Ivan Reshetnikov", username = "heilhead" },
+    { signature = "Xavier Basty-Kjellberg", username = "xav" },
+]

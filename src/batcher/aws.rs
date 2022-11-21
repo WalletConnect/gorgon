@@ -1,0 +1,84 @@
+use {
+    super::BatchExporter,
+    async_trait::async_trait,
+    aws_sdk_s3::{types::ByteStream, Client},
+    chrono::{Datelike, Utc},
+    std::{
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    },
+    thiserror::Error as ThisError,
+    tracing::info,
+};
+
+#[derive(Debug, ThisError)]
+pub enum AwsExporterError {
+    #[error("error uploading to s3: {0}")]
+    UploadError(String),
+
+    #[error("unknown error: {0}")]
+    Other(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Clone)]
+pub struct AwsExporterOpts {
+    pub export_name: &'static str,
+    pub file_extension: &'static str,
+    pub bucket_name: Arc<str>,
+    pub s3_client: Client,
+    pub node_ip: Arc<str>,
+}
+
+#[derive(Clone)]
+pub struct AwsExporter {
+    opts: AwsExporterOpts,
+}
+
+impl AwsExporter {
+    pub fn new(opts: AwsExporterOpts) -> Self {
+        Self { opts }
+    }
+}
+
+#[async_trait]
+impl BatchExporter for AwsExporter {
+    type Error = AwsExporterError;
+
+    async fn export(self, data: Vec<u8>) -> Result<(), Self::Error> {
+        let export_name = self.opts.export_name;
+        let file_extension = self.opts.file_extension;
+        let node_ip = &self.opts.node_ip;
+        let now = Utc::now();
+        let (year, month, day) = (now.year(), now.month(), now.day());
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(anyhow::Error::from)?
+            .as_millis();
+
+        let key = format!(
+            "{export_name}/year={year}/month={month}/day={day}/\
+             {export_name}_rs_{timestamp}_{node_ip}.{file_extension}"
+        );
+
+        info!(
+            bucket = self.opts.bucket_name.as_ref(),
+            key = key.as_str(),
+            "uploading analytics to s3"
+        );
+
+        self.opts
+            .s3_client
+            .put_object()
+            .bucket(self.opts.bucket_name.as_ref())
+            .key(key)
+            .body(ByteStream::from(data))
+            .send()
+            .await
+            .map_err(|err| AwsExporterError::UploadError(err.to_string()))?;
+
+        info!("analytics successfully uploaded");
+
+        Ok(())
+    }
+}
