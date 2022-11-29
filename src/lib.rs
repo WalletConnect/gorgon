@@ -44,3 +44,7 @@ where
 {
     fn collect(&self, _: T) {}
 }
+
+pub fn create_timestamp() -> String {
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
