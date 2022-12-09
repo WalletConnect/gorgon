@@ -39,3 +39,13 @@ where
 {
     fn collect(&self, data: T);
 }
+
+#[deprecated(
+    since = "0.1.2",
+    note = "please use `time::now` and `time::format` instead"
+)]
+pub fn create_timestamp() -> String {
+    chrono::Utc::now()
+        .format(time::TIMESTAMP_FORMAT)
+        .to_string()
+}
