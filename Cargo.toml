@@ -18,7 +18,7 @@ thiserror = "1.0"
 anyhow = "1"
 
 chrono = { version = "0.4", features = ["serde"] }
-aws-sdk-s3 = "0.17"
+aws-sdk-s3 = "0.24.0"
 maxminddb = "0.23"
 bytes = "1.2"
 parquet = { git = "https://github.com/WalletConnect/arrow-rs.git", rev = "431abf5", default-features = false, features = ["flate2"]  }
