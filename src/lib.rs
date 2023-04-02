@@ -1,17 +1,25 @@
+use std::sync::Arc;
+
 pub use noop::*;
-use {serde::Serialize, std::sync::Arc};
 
 pub mod batcher;
 pub mod geoip;
 mod noop;
 pub mod time;
 
-#[derive(Clone)]
 pub struct Analytics<T>
 where
     T: AnalyticsEvent,
 {
     inner: Arc<dyn AnalyticsCollector<T>>,
+}
+
+impl<T: AnalyticsEvent> Clone for Analytics<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<T> Analytics<T>
@@ -29,9 +37,9 @@ where
     }
 }
 
-pub trait AnalyticsEvent: 'static + Serialize + Send + Sync {}
+pub trait AnalyticsEvent: 'static + Send + Sync {}
 
-impl<T> AnalyticsEvent for T where T: 'static + Serialize + Send + Sync {}
+impl<T> AnalyticsEvent for T where T: 'static + Send + Sync {}
 
 pub trait AnalyticsCollector<T>: Send + Sync
 where

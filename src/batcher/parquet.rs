@@ -34,7 +34,7 @@ where
 
     fn create(buffer: Buffer, opts: &BatchCollectorOpts) -> Result<Self, Self::Error> {
         let props = WriterProperties::builder()
-            .set_compression(Compression::GZIP)
+            .set_compression(Compression::GZIP(Default::default()))
             .build();
         let props = Arc::new(props);
         let schema = ([] as [T; 0]).schema()?;

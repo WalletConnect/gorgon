@@ -1,7 +1,7 @@
 use {
     super::BatchExporter,
     async_trait::async_trait,
-    aws_sdk_s3::{types::ByteStream, Client},
+    aws_sdk_s3::{primitives::ByteStream, Client},
     chrono::{Datelike, Utc},
     std::{
         sync::Arc,
