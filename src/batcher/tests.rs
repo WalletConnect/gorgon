@@ -3,7 +3,6 @@ use {
     crate::Analytics,
     async_trait::async_trait,
     parquet_derive::ParquetRecordWriter,
-    serde::Serialize,
     std::time::Duration,
     tokio::sync::mpsc::{self, error::TrySendError},
 };
@@ -24,7 +23,7 @@ impl BatchExporter for MockExporter {
     }
 }
 
-#[derive(Serialize, ParquetRecordWriter)]
+#[derive(ParquetRecordWriter)]
 struct DataA {
     a: u32,
     b: &'static str,
