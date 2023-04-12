@@ -1,12 +1,11 @@
 use {
-    super::{
+    crate::{
+        collectors::{
+            batch::{BatchBuffer, BatchCollector, BatchError, BatchOpts},
+            BatchExporter,
+            BatchWriter,
+        },
         AnalyticsEvent,
-        BatchCollector,
-        BatchCollectorError,
-        BatchCollectorOpts,
-        BatchExporter,
-        BatchWriter,
-        Buffer,
     },
     parquet::{
         basic::Compression,
@@ -22,7 +21,21 @@ pub type ParquetWriterError = ParquetError;
 
 pub struct ParquetWriter<T> {
     data: Vec<T>,
-    writer: SerializedFileWriter<Buffer>,
+    writer: SerializedFileWriter<BatchBuffer>,
+}
+
+impl<T> ParquetWriter<T> {
+    pub fn new<E>(
+        opts: BatchOpts,
+        exporter: E,
+    ) -> Result<BatchCollector<T>, BatchError<<Self as BatchWriter<T>>::Error>>
+    where
+        T: AnalyticsEvent,
+        [T]: RecordWriter<T>,
+        E: BatchExporter,
+    {
+        BatchCollector::new::<Self, _>(opts, exporter)
+    }
 }
 
 impl<T> BatchWriter<T> for ParquetWriter<T>
@@ -32,7 +45,7 @@ where
 {
     type Error = ParquetWriterError;
 
-    fn create(buffer: Buffer, opts: &BatchCollectorOpts) -> Result<Self, Self::Error> {
+    fn create(buffer: BatchBuffer, opts: &BatchOpts) -> Result<Self, Self::Error> {
         let props = WriterProperties::builder()
             .set_compression(Compression::GZIP(Default::default()))
             .build();
@@ -64,18 +77,6 @@ where
 
         row_group_writer.close()?;
 
-        writer.into_inner().map(Buffer::into_inner)
+        writer.into_inner().map(BatchBuffer::into_inner)
     }
-}
-
-pub fn create_parquet_collector<T, E>(
-    opts: BatchCollectorOpts,
-    exporter: E,
-) -> Result<BatchCollector<T>, BatchCollectorError<<ParquetWriter<T> as BatchWriter<T>>::Error>>
-where
-    T: AnalyticsEvent,
-    [T]: RecordWriter<T>,
-    E: BatchExporter,
-{
-    BatchCollector::new::<ParquetWriter<_>, _>(opts, exporter)
 }

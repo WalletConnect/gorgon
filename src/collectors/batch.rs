@@ -1,6 +1,6 @@
 use {
-    super::{AnalyticsCollector, AnalyticsEvent},
-    async_trait::async_trait,
+    super::{BatchExporter, BatchWriter},
+    crate::{AnalyticsCollector, AnalyticsEvent},
     std::{
         fmt::{Debug, Display},
         io::Write,
@@ -12,24 +12,60 @@ use {
         time::{Duration, Instant},
     },
     tokio::{
-        sync::mpsc::{self, error::TrySendError},
+        sync::{mpsc, mpsc::error::TrySendError},
         time::MissedTickBehavior,
     },
     tracing::error,
 };
 
-mod aws;
-mod parquet;
-#[cfg(test)]
-mod tests;
+////////////////////////////////////////////////////////////////////////////////
 
-pub use {
-    self::parquet::{create_parquet_collector, ParquetWriter, ParquetWriterError},
-    aws::{AwsExporter, AwsExporterOpts},
-};
+#[derive(Debug, Clone)]
+pub struct BatchOpts {
+    /// Data collection queue size. Overflowing it will either drop additional
+    /// analytics events, or cause an `await` (in async version) until there's
+    /// room in the queue.
+    pub event_queue_limit: usize,
+
+    /// The amount of time after which current batch will be exported regardless
+    /// of how much data it has collected.
+    pub export_time_threshold: Duration,
+
+    /// Writer buffer size threshold, going above which will cause data export
+    /// and new batch allocation.
+    pub export_size_threshold: usize,
+
+    /// The maximum number of events that a single batch can contain. Going
+    /// above this limit will cause data export and new batch allocation.
+    pub export_row_threshold: usize,
+
+    /// Allocation size for the batch data buffer. Overflowing it will cause
+    /// reallocation of data, so it's best to set the export threshold below
+    /// this value to never overflow.
+    pub batch_alloc_size: usize,
+
+    /// The interval at which the background task will check if current batch
+    /// has expired and needs to be exported.
+    pub export_check_interval: Duration,
+}
+
+impl Default for BatchOpts {
+    fn default() -> Self {
+        Self {
+            event_queue_limit: 2048,
+            export_time_threshold: Duration::from_secs(60 * 5),
+            export_size_threshold: 1024 * 1024 * 128,
+            export_row_threshold: 1024 * 128,
+            batch_alloc_size: 1024 * 1024 * 130,
+            export_check_interval: Duration::from_secs(30),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, thiserror::Error)]
-pub enum BatchCollectorError<T: Debug + Display> {
+pub enum BatchError<T: Debug + Display> {
     #[error("event queue overflow")]
     EventQueueOverflow,
 
@@ -40,7 +76,7 @@ pub enum BatchCollectorError<T: Debug + Display> {
     Writer(T),
 }
 
-impl<T, E> From<TrySendError<T>> for BatchCollectorError<E>
+impl<T, E> From<TrySendError<T>> for BatchError<E>
 where
     T: AnalyticsEvent,
     E: Debug + Display,
@@ -53,27 +89,23 @@ where
     }
 }
 
-#[derive(Debug)]
-enum ControlEvent<T> {
-    Process(T),
-    Shutdown,
-}
+////////////////////////////////////////////////////////////////////////////////
 
 /// Wrapper around the `Vec<u8>` buffer to accurately report the underlying
 /// buffer size after giving away its ownership.
-pub struct Buffer {
+pub struct BatchBuffer {
     data: Vec<u8>,
     size_bytes: Arc<AtomicUsize>,
 }
 
-impl Buffer {
+impl BatchBuffer {
     fn new(capacity: usize) -> Self {
         let data = Vec::with_capacity(capacity);
         let size_bytes = Arc::new(AtomicUsize::new(0));
         Self { data, size_bytes }
     }
 
-    fn into_inner(self) -> Vec<u8> {
+    pub(crate) fn into_inner(self) -> Vec<u8> {
         self.data
     }
 
@@ -82,7 +114,7 @@ impl Buffer {
     }
 }
 
-impl Write for Buffer {
+impl Write for BatchBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let len = self.data.write(buf)?;
         self.size_bytes.fetch_add(len, Ordering::Relaxed);
@@ -94,17 +126,7 @@ impl Write for Buffer {
     }
 }
 
-pub trait BatchWriter<T: AnalyticsEvent>: 'static + Send + Sync + Sized {
-    type Error: Debug + Display;
-
-    fn create(buffer: Buffer, opts: &BatchCollectorOpts) -> Result<Self, Self::Error>;
-
-    fn write(&mut self, data: T) -> Result<(), Self::Error>;
-
-    fn flush(&mut self) -> Result<(), Self::Error>;
-
-    fn into_buffer(self) -> Result<Vec<u8>, Self::Error>;
-}
+////////////////////////////////////////////////////////////////////////////////
 
 struct Batch<T: AnalyticsEvent, W: BatchWriter<T>> {
     data: W,
@@ -120,10 +142,10 @@ where
     T: AnalyticsEvent,
     W: BatchWriter<T>,
 {
-    fn new(opts: &BatchCollectorOpts) -> Result<Self, BatchCollectorError<W::Error>> {
-        let buffer = Buffer::new(opts.batch_alloc_size);
+    fn new(opts: &BatchOpts) -> Result<Self, BatchError<W::Error>> {
+        let buffer = BatchBuffer::new(opts.batch_alloc_size);
         let size_bytes = buffer.size_bytes().clone();
-        let data = W::create(buffer, opts).map_err(BatchCollectorError::Writer)?;
+        let data = W::create(buffer, opts).map_err(BatchError::Writer)?;
 
         Ok(Self {
             data,
@@ -135,14 +157,14 @@ where
         })
     }
 
-    fn write(&mut self, data: T) -> Result<usize, BatchCollectorError<W::Error>> {
-        self.data.write(data).map_err(BatchCollectorError::Writer)?;
+    fn write(&mut self, data: T) -> Result<usize, BatchError<W::Error>> {
+        self.data.write(data).map_err(BatchError::Writer)?;
         self.num_rows += 1;
         Ok(self.size_bytes())
     }
 
-    fn flush(&mut self) -> Result<(), BatchCollectorError<W::Error>> {
-        self.data.flush().map_err(BatchCollectorError::Writer)
+    fn flush(&mut self) -> Result<(), BatchError<W::Error>> {
+        self.data.flush().map_err(BatchError::Writer)
     }
 
     fn num_rows(&self) -> usize {
@@ -166,20 +188,21 @@ where
         self.expiration
     }
 
-    fn into_buffer(self) -> Result<Vec<u8>, BatchCollectorError<W::Error>> {
-        self.data.into_buffer().map_err(BatchCollectorError::Writer)
+    fn into_buffer(self) -> Result<Vec<u8>, BatchError<W::Error>> {
+        self.data.into_buffer().map_err(BatchError::Writer)
     }
 }
 
-#[async_trait]
-pub trait BatchExporter: 'static + Clone + Send {
-    type Error: Debug + Display;
+////////////////////////////////////////////////////////////////////////////////
 
-    async fn export(self, data: Vec<u8>) -> Result<(), Self::Error>;
+#[derive(Debug)]
+enum ControlEvent<T> {
+    Process(T),
+    Shutdown,
 }
 
 struct Batcher<T: AnalyticsEvent, E: BatchExporter, W: BatchWriter<T>> {
-    opts: BatchCollectorOpts,
+    opts: BatchOpts,
     ctrl_rx: mpsc::Receiver<ControlEvent<T>>,
     batch: Batch<T, W>,
     exporter: E,
@@ -192,10 +215,10 @@ where
     W: BatchWriter<T>,
 {
     fn new(
-        opts: impl Into<BatchCollectorOpts>,
+        opts: impl Into<BatchOpts>,
         ctrl_rx: mpsc::Receiver<ControlEvent<T>>,
         exporter: E,
-    ) -> Result<Self, BatchCollectorError<W::Error>> {
+    ) -> Result<Self, BatchError<W::Error>> {
         let opts = opts.into();
         let batch = Self::create_new_batch(&opts)?;
 
@@ -207,7 +230,7 @@ where
         })
     }
 
-    fn process(&mut self, evt: T) -> Result<(), BatchCollectorError<W::Error>> {
+    fn process(&mut self, evt: T) -> Result<(), BatchError<W::Error>> {
         if !self.batch.has_expiration() {
             self.batch
                 .set_expiration(Instant::now() + self.opts.export_time_threshold);
@@ -223,7 +246,7 @@ where
         }
     }
 
-    fn export(&mut self) -> Result<(), BatchCollectorError<W::Error>> {
+    fn export(&mut self) -> Result<(), BatchError<W::Error>> {
         self.batch.flush()?;
 
         if self.has_data() {
@@ -252,55 +275,12 @@ where
         self.batch.num_rows() > 0
     }
 
-    fn create_new_batch(
-        opts: &BatchCollectorOpts,
-    ) -> Result<Batch<T, W>, BatchCollectorError<W::Error>> {
+    fn create_new_batch(opts: &BatchOpts) -> Result<Batch<T, W>, BatchError<W::Error>> {
         Batch::new(opts)
     }
 }
 
-/// Most of these values should be left on default outside of testing.
-#[derive(Debug, Clone)]
-pub struct BatchCollectorOpts {
-    /// Data collection queue size. Overflowing it will either drop additional
-    /// analytics events, or cause an `await` (in async version) until there's
-    /// room in the queue.
-    pub event_queue_limit: usize,
-
-    /// The amount of time after which current batch will be exported regardless
-    /// of how much data it has collected.
-    pub export_time_threshold: Duration,
-
-    /// Writer buffer size threshold, going above which will cause data export
-    /// and new batch allocation.
-    pub export_size_threshold: usize,
-
-    /// The maximum number of events that a single batch can contain. Going
-    /// above this limit will cause data export and new batch allocation.
-    pub export_row_threshold: usize,
-
-    /// Allocation size for the batch data buffer. Overflowing it will cause
-    /// reallocation of data, so it's best to set the export threshold below
-    /// this value to never overflow.
-    pub batch_alloc_size: usize,
-
-    /// The interval at which the background task will check if current batch
-    /// has expired and needs to be exported.
-    pub export_check_interval: Duration,
-}
-
-impl Default for BatchCollectorOpts {
-    fn default() -> Self {
-        Self {
-            event_queue_limit: 2048,
-            export_time_threshold: Duration::from_secs(60 * 5),
-            export_size_threshold: 1024 * 1024 * 128,
-            export_row_threshold: 1024 * 128,
-            batch_alloc_size: 1024 * 1024 * 130,
-            export_check_interval: Duration::from_secs(30),
-        }
-    }
-}
+////////////////////////////////////////////////////////////////////////////////
 
 pub struct BatchCollector<T: AnalyticsEvent> {
     ctrl_tx: mpsc::Sender<ControlEvent<T>>,
@@ -310,10 +290,7 @@ impl<T> BatchCollector<T>
 where
     T: AnalyticsEvent,
 {
-    pub fn new<W, E>(
-        opts: BatchCollectorOpts,
-        exporter: E,
-    ) -> Result<Self, BatchCollectorError<W::Error>>
+    pub fn new<W, E>(opts: BatchOpts, exporter: E) -> Result<Self, BatchError<W::Error>>
     where
         W: BatchWriter<T>,
         E: BatchExporter,

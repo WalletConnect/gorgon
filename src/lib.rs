@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-pub use noop::*;
-
-pub mod batcher;
+pub mod collectors;
+pub mod exporters;
 pub mod geoip;
-mod noop;
 pub mod time;
+pub mod writers;
+
+#[cfg(test)]
+mod tests;
 
 pub struct Analytics<T>
 where
