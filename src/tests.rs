@@ -1,10 +1,13 @@
 use {
-    super::{create_parquet_collector, BatchCollectorOpts, BatchExporter},
-    crate::Analytics,
+    crate::{
+        collectors::{batch::BatchOpts, BatchExporter},
+        writers::parquet::ParquetWriter,
+        Analytics,
+    },
     async_trait::async_trait,
     parquet_derive::ParquetRecordWriter,
     std::time::Duration,
-    tokio::sync::mpsc::{self, error::TrySendError},
+    tokio::sync::{mpsc, mpsc::error::TrySendError},
 };
 
 #[derive(Clone)]
@@ -34,7 +37,7 @@ struct DataA {
 async fn export_by_timeout() {
     let (tx, mut rx) = mpsc::channel(32);
 
-    let opts = BatchCollectorOpts {
+    let opts = BatchOpts {
         batch_alloc_size: 8192,
         export_time_threshold: Duration::from_millis(100),
         export_size_threshold: 8192,
@@ -42,7 +45,7 @@ async fn export_by_timeout() {
         ..Default::default()
     };
 
-    let collector = create_parquet_collector(opts, MockExporter(tx)).unwrap();
+    let collector = ParquetWriter::new(opts, MockExporter(tx)).unwrap();
     let analytics = Analytics::new(collector);
 
     analytics.collect(DataA {
@@ -69,13 +72,13 @@ async fn export_by_timeout() {
 async fn export_by_num_rows() {
     let (tx, mut rx) = mpsc::channel(32);
 
-    let opts = BatchCollectorOpts {
+    let opts = BatchOpts {
         batch_alloc_size: 8192,
         export_row_threshold: 2,
         ..Default::default()
     };
 
-    let collector = create_parquet_collector(opts, MockExporter(tx)).unwrap();
+    let collector = ParquetWriter::new(opts, MockExporter(tx)).unwrap();
     let analytics = Analytics::new(collector);
 
     analytics.collect(DataA {
