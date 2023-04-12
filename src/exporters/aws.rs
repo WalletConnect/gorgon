@@ -51,8 +51,8 @@ impl BatchExporter for AwsExporter {
         let timestamp = now.timestamp_millis();
 
         let key = format!(
-            "{export_name}/year={year}/month={month}/day={day}/\
-             {export_name}_rs_{timestamp}_{node_ip}.{file_extension}"
+            "{export_name}/dt={year}-{month}-{day}/{export_name}_rs_{timestamp}_{node_ip}.\
+             {file_extension}"
         );
 
         info!(
