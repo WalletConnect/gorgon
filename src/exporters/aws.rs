@@ -10,6 +10,7 @@ use {
 
 #[derive(Debug, Clone)]
 pub struct AwsOpts {
+    pub export_prefix: &'static str,
     pub export_name: &'static str,
     pub file_extension: &'static str,
     pub bucket_name: Arc<str>,
@@ -44,6 +45,7 @@ impl BatchExporter for AwsExporter {
     async fn export(self, data: Vec<u8>) -> Result<(), Self::Error> {
         let now = Utc::now();
 
+        let export_prefix = self.opts.export_prefix;
         let export_name = self.opts.export_name;
         let file_extension = self.opts.file_extension;
         let node_ip = &self.opts.node_ip;
@@ -51,7 +53,7 @@ impl BatchExporter for AwsExporter {
         let timestamp = now.timestamp_millis();
 
         let key = format!(
-            "{export_name}/dt={year}-{month}-{day}/{export_name}_rs_{timestamp}_{node_ip}.\
+            "{export_prefix}/dt={year}-{month:0<2}-{day:0<2}/{export_name}_{timestamp}_{node_ip}.\
              {file_extension}"
         );
 
