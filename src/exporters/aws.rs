@@ -53,7 +53,7 @@ impl BatchExporter for AwsExporter {
         let timestamp = now.timestamp_millis();
 
         let key = format!(
-            "{export_prefix}/dt={year}-{month:0<2}-{day:0<2}/{export_name}_{timestamp}_{node_ip}.\
+            "{export_prefix}/dt={year}-{month:0>2}-{day:0>2}/{export_name}_{timestamp}_{node_ip}.\
              {file_extension}"
         );
 
