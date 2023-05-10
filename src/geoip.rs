@@ -2,6 +2,8 @@ use {
     aws_sdk_s3::Client as S3Client,
     bytes::Bytes,
     std::{net::IpAddr, sync::Arc},
+    tap::TapFallible,
+    tracing::log,
 };
 
 #[derive(Default, Debug, Clone)]
@@ -46,6 +48,7 @@ impl GeoIpReader {
         self.reader
             .as_ref()?
             .lookup::<Country>(addr)
+            .tap_err(|err| log::error!("geoip lookup error: {err}"))
             .ok()
             .map(|country| AnalyticsGeoData {
                 city: None,
@@ -65,6 +68,7 @@ impl GeoIpReader {
         self.reader
             .as_ref()?
             .lookup::<City>(addr)
+            .tap_err(|err| log::error!("geoip_city lookup error: {err}"))
             .ok()
             .map(|city| AnalyticsGeoData {
                 city: city
