@@ -11,6 +11,7 @@ tracing = "0.1"
 # Misc
 thiserror = "1.0"
 anyhow = "1"
+tap = "1.0"
 
 chrono = { version = "0.4" }
 aws-sdk-s3 = "0.25"
