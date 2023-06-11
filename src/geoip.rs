@@ -68,7 +68,7 @@ impl GeoIpReader {
         self.reader
             .as_ref()?
             .lookup::<City>(addr)
-            .tap_err(|err| log::error!("geoip_city lookup error: {err}"))
+            .tap_err(|err| log::warn!("geoip_city lookup error: {err}"))
             .ok()
             .map(|city| AnalyticsGeoData {
                 city: city
