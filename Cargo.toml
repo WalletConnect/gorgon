@@ -17,5 +17,5 @@ chrono = { version = "0.4" }
 aws-sdk-s3 = "0.25"
 maxminddb = "0.23"
 bytes = "1.2"
-parquet = { git = "https://github.com/WalletConnect/arrow-rs.git", rev = "4577a11", default-features = false, features = ["flate2"]  }
-parquet_derive = { git = "https://github.com/WalletConnect/arrow-rs.git", rev = "4577a11" }
+parquet = { git = "https://github.com/WalletConnect/arrow-rs.git", rev = "99a1cc3", default-features = false, features = ["flate2"]  }
+parquet_derive = { git = "https://github.com/WalletConnect/arrow-rs.git", rev = "99a1cc3" }
