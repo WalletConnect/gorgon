@@ -64,6 +64,8 @@ impl Default for BatchOpts {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
 #[derive(Debug, thiserror::Error)]
 pub enum BatchError<T: Debug + Display> {
     #[error("event queue overflow")]
@@ -74,6 +76,9 @@ pub enum BatchError<T: Debug + Display> {
 
     #[error("writer error: {0}")]
     Writer(T),
+
+    #[error("export error: {0}")]
+    Export(BoxError),
 }
 
 impl<T, E> From<TrySendError<T>> for BatchError<E>
@@ -220,7 +225,7 @@ where
         exporter: E,
     ) -> Result<Self, BatchError<W::Error>> {
         let opts = opts.into();
-        let batch = Self::create_new_batch(&opts)?;
+        let batch = Batch::new(&opts)?;
 
         Ok(Self {
             opts,
@@ -250,15 +255,14 @@ where
         self.batch.flush()?;
 
         if self.has_data() {
-            let next_batch = Self::create_new_batch(&self.opts)?;
+            let next_batch = Batch::new(&self.opts)?;
             let prev_batch = std::mem::replace(&mut self.batch, next_batch);
-            let data = prev_batch.into_buffer()?;
             let exporter = self.exporter.clone();
 
             // We want to continue processing events while exporting, so spawn a separate
             // task.
             tokio::spawn(async move {
-                if let Err(error) = exporter.export(data).await {
+                if let Err(error) = export_internal(exporter, prev_batch).await {
                     error!(%error, bug = true, "analytics data export failed");
                 }
             });
@@ -274,10 +278,27 @@ where
     fn has_data(&self) -> bool {
         self.batch.num_rows() > 0
     }
+}
 
-    fn create_new_batch(opts: &BatchOpts) -> Result<Batch<T, W>, BatchError<W::Error>> {
-        Batch::new(opts)
-    }
+async fn export_internal<T, E, W>(
+    exporter: E,
+    batch: Batch<T, W>,
+) -> Result<(), BatchError<W::Error>>
+where
+    T: AnalyticsEvent,
+    E: BatchExporter,
+    W: BatchWriter<T>,
+{
+    // Writing batch data into buffer may be a CPU-heavy operation, so run it in a
+    // separate thread.
+    let data = tokio::task::spawn_blocking(move || batch.into_buffer())
+        .await
+        .map_err(|err| BatchError::Export(Box::new(err)))??;
+
+    exporter
+        .export(data)
+        .await
+        .map_err(|err| BatchError::Export(Box::new(err)))
 }
 
 ////////////////////////////////////////////////////////////////////////////////

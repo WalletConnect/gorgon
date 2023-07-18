@@ -15,7 +15,7 @@ struct MockExporter(mpsc::Sender<Vec<u8>>);
 
 #[async_trait]
 impl BatchExporter for MockExporter {
-    type Error = u32;
+    type Error = std::io::Error;
 
     async fn export(mut self, data: Vec<u8>) -> Result<(), Self::Error> {
         // Provide custom messages for clean log output.
