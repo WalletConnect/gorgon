@@ -64,8 +64,6 @@ impl Default for BatchOpts {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
 #[derive(Debug, thiserror::Error)]
 pub enum BatchError<T: Debug + Display> {
     #[error("event queue overflow")]
@@ -78,7 +76,7 @@ pub enum BatchError<T: Debug + Display> {
     Writer(T),
 
     #[error("export error: {0}")]
-    Export(BoxError),
+    Export(anyhow::Error),
 }
 
 impl<T, E> From<TrySendError<T>> for BatchError<E>
@@ -293,12 +291,12 @@ where
     // separate thread.
     let data = tokio::task::spawn_blocking(move || batch.into_buffer())
         .await
-        .map_err(|err| BatchError::Export(Box::new(err)))??;
+        .map_err(|err| BatchError::Export(err.into()))??;
 
     exporter
         .export(data)
         .await
-        .map_err(|err| BatchError::Export(Box::new(err)))
+        .map_err(|err| BatchError::Export(err.into()))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
