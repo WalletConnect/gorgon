@@ -4,18 +4,21 @@ use {
         AnalyticsEvent,
     },
     async_trait::async_trait,
-    std::fmt::{Debug, Display},
+    std::{
+        error::Error as StdError,
+        fmt::{Debug, Display},
+    },
 };
 
 #[async_trait]
 pub trait BatchExporter: 'static + Clone + Send {
-    type Error: Debug + Display;
+    type Error: StdError + Send + Sync + Debug + Display + 'static;
 
     async fn export(self, data: Vec<u8>) -> Result<(), Self::Error>;
 }
 
 pub trait BatchWriter<T: AnalyticsEvent>: 'static + Send + Sync + Sized {
-    type Error: Debug + Display;
+    type Error: StdError + Send + Sync + Debug + Display + 'static;
 
     fn create(buffer: BatchBuffer, opts: &BatchOpts) -> Result<Self, Self::Error>;
 
