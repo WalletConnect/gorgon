@@ -1,19 +1,18 @@
 # This workflow moves issues to the Project board when they receive the "accepted" label
 # When WalletConnect Org members create issues they are automatically "accepted".
 # Otherwise, they need to manually receive that label during intake.
-name: intake
+name: ⚡ Intake
 
 on:
   issues:
-    types: [opened, labeled]
-  pull_request:
     types: [opened, labeled]
 
 jobs:
   add-to-project:
     name: Add issue to board
     if: github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'accepted'
-    runs-on: ubuntu-latest
+    runs-on:
+      group: ${{ vars.RUN_GROUP }}
     steps:
       - uses: actions/add-to-project@v0.1.0
         with:
@@ -25,7 +24,8 @@ jobs:
   auto-promote:
     name: auto-promote
     if: github.event.action == 'opened'
-    runs-on: ubuntu-latest
+    runs-on:
+      group: ${{ vars.RUN_GROUP }}
     steps:
       - name: Check Core Team membership
         uses: tspascoal/get-user-teams-membership@v1
