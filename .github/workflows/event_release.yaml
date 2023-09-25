@@ -1,0 +1,57 @@
+name: ⚡ Release
+run-name: 'Release / ${{ github.event.head_commit.message }}'
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'LICENSE'
+      - 'rustfmt.toml'
+      - '.editorconfig'
+      - '.pre-commit-config.yaml'
+
+concurrency: deploy
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+
+# We skip the CI part here since it must have already run thanks to branch protection.
+
+  update_version:
+    name: Update Version
+    runs-on:
+      group: ${{ vars.RUN_GROUP }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          token: ${{ secrets.RELEASE_PAT }}
+          fetch-depth: 0
+
+      - name: Release
+        id: release
+        uses: WalletConnect/actions/github/update-rust-version/@2.1.4
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+
+  released_version:
+    name: Release Version ➠ ${{ needs.update_version.outputs.version }}
+    runs-on:
+      group: ${{ vars.RUN_GROUP }}
+    needs: [ update_version ]
+    steps:
+      - run: echo "Version = ${{ needs.update_version.outputs.version }}"
